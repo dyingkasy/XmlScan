@@ -3,7 +3,7 @@ import sys
 import qtawesome as qta
 from PyQt5.QtWidgets import QApplication
 from ui import NFCeAnalyzerApp
-
+from export import export_to_excel  # Importar a função export_to_excel
 
 def apply_styles(app):
     """
@@ -77,6 +77,12 @@ def main():
 
     # Inicializa a interface principal do aplicativo
     main_window = NFCeAnalyzerApp()
+
+    # Aqui, você pode conectar o sinal de exportação da interface com a função export_to_excel
+    # Supondo que na sua interface exista um botão que, ao ser clicado, chama a função de exportação
+    # Por exemplo:
+    # main_window.export_excel_button.clicked.connect(lambda: export_to_excel(report_text, 'relatorio.xlsx'))
+
     main_window.show()
 
     # Inicia o loop de eventos da aplicação
