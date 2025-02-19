@@ -1,268 +1,279 @@
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-)
-from reportlab.lib import colors
+import locale
+import logging
+import pandas as pd
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-import csv
-import unicodedata
-import re
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
 
-# Importações adicionais para o Excel
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
+locale.setlocale(locale.LC_ALL, '')
 
-def remove_accents(input_str):
+def _determine_header(notas: list) -> str:
     """
-    Remove acentos e caracteres especiais de uma string.
+    Determina o cabeçalho da primeira coluna conforme o modelo da nota.
+    Retorna "Número NF-e" se o modelo for "NFE" e "Número NFC-e" caso contrário.
     """
-    nfkd_form = unicodedata.normalize('NFKD', input_str)
-    only_ascii = ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
-    # Remove caracteres especiais, deixando apenas letras, números e espaços
-    return re.sub(r'[^a-zA-Z0-9 ]', '', only_ascii)
+    if notas:
+        modelo = notas[0].get("modelo", "NFC-E")
+        return "Número NF-e" if modelo.upper() == "NFE" else "Número NFC-e"
+    return "Número NFC-e"
 
-def parse_report_text(report_text):
+def export_to_pdf(report: dict, output_file: str) -> None:
     """
-    Analisa o texto do relatório e retorna uma estrutura de dados.
+    Exporta o relatório para PDF contendo:
+      - Um resumo com Total de Notas e Notas Transmitidas;
+      - Uma tabela principal com os campos:
+          Número NF-e/NFC-e, Chave, Valor, Status, Emissão, Autorização;
+      - Para cada nota, o detalhamento dos produtos.
     """
-    lines = report_text.strip().split('\n')
-    notas = {'resumo': {}, 'notas': []}
-    current_nota = None
+    doc = SimpleDocTemplate(
+        output_file,
+        pagesize=A4,
+        rightMargin=20,
+        leftMargin=20,
+        topMargin=20,
+        bottomMargin=20
+    )
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles["Title"],
+        textColor=colors.darkblue,
+        alignment=1
+    )
+    heading_style = ParagraphStyle(
+        'HeadingStyle',
+        parent=styles["Heading2"],
+        textColor=colors.darkred
+    )
+    normal_style = styles["Normal"]
 
-    idx = 0
-    while idx < len(lines):
-        line = lines[idx].strip()
-        if line.startswith('Total de Notas:'):
-            notas['resumo']['total_notas'] = int(line.split(':', 1)[1].strip())
-        elif line.startswith('Valor Total:'):
-            valor_total_str = line.split(':', 1)[1].strip().replace('R$', '').replace(',', '.')
-            notas['resumo']['valor_total'] = float(valor_total_str)
-        elif line.startswith('Número NFC-e:'):
-            if current_nota:
-                notas['notas'].append(current_nota)
-            current_nota = {}
-            current_nota['produtos'] = []
-            current_nota['nNF'] = line.split(':', 1)[1].strip()
-        elif line.startswith('Nome da Nota:'):
-            current_nota['nome'] = line.split(':', 1)[1].strip()
-        elif line.startswith('Valor:'):
-            valor_str = line.split(':', 1)[1].strip().replace('R$', '').replace(',', '.')
-            current_nota['valor'] = float(valor_str)
-        elif line.startswith('Status:'):
-            current_nota['status'] = line.split(':', 1)[1].strip()
-        elif line.startswith('Data de Emissão:'):
-            current_nota['emitida'] = line.split(':', 1)[1].strip()
-        elif line.startswith('Data de Autorização:'):
-            current_nota['autorizada'] = line.split(':', 1)[1].strip()
-        elif line.startswith('Produtos:'):
-            idx += 1  # Avança para a próxima linha
-            while idx < len(lines) and re.match(r'-+\s*Nome:', lines[idx].strip()):
-                produto_line = lines[idx].strip()
-                produto = {}
-                for part in produto_line.split(','):
-                    key_value = part.split(':', 1)
-                    if len(key_value) == 2:
-                        key = key_value[0].strip()
-                        key = re.sub(r'^-+\s*', '', key)  # Remove traços e espaços
-                        key = remove_accents(key).lower().replace(' ', '_')  # Normaliza a chave
-                        value = key_value[1].strip()
-                        # Converter valores numéricos
-                        if key in ['valor_unitario', 'valor_total']:
-                            value = value.replace('R$', '').replace(',', '.')
-                            try:
-                                value = float(value)
-                            except ValueError:
-                                value = 0.0
-                        # Mantém "quantidade" como string para incluir a unidade
-                        produto[key] = value
-                # Adiciona o produto somente se tiver dados
-                if produto:
-                    current_nota['produtos'].append(produto)
-                idx += 1
-            continue  # Evita incrementar idx novamente
-        idx += 1
-
-    if current_nota:
-        notas['notas'].append(current_nota)
-
-    return notas
-
-def export_to_pdf(report_text, output_file):
-    """
-    Exporta o relatório como um arquivo PDF com design aprimorado,
-    combinando detalhes da nota fiscal e produtos.
-    """
-    # [Seu código atual da função export_to_pdf]
-    pass  # Substitua por sua implementação atual
-
-def export_to_excel(report_text, output_file):
-    """
-    Exporta o relatório como um arquivo Excel (.xlsx) formatado.
-    """
-    try:
-        notas = parse_report_text(report_text)
-
-        wb = Workbook()
-
-        # Estilos
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill("solid", fgColor="4F81BD")
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
+    story = []
+    
+    title = Paragraph("Relatório de NFC-e", title_style)
+    story.append(title)
+    story.append(Spacer(1, 12))
+    
+    # Totais
+    notas = report.get("notas", [])
+    total_notas = len(notas)
+    valor_total = sum(n.get("valor", 0) for n in notas)
+    notas_transmitidas = [n for n in notas if (n.get("status") or "").lower() == "autorizada"]
+    total_transmitidas = len(notas_transmitidas)
+    valor_transmitidas = sum(n.get("valor", 0) for n in notas_transmitidas)
+    
+    summary_header = Paragraph("Resumo", heading_style)
+    story.append(summary_header)
+    story.append(Spacer(1, 6))
+    summary_data = [
+        ["", "Quantidade", "Valor"],
+        ["Total de Notas", total_notas, locale.currency(valor_total or 0, grouping=True)],
+        ["Notas Transmitidas", total_transmitidas, locale.currency(valor_transmitidas or 0, grouping=True)]
+    ]
+    summary_table = Table(summary_data, colWidths=[150, 100, 150])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+    ]))
+    story.append(summary_table)
+    story.append(Spacer(1, 12))
+    
+    # Cabeçalho da tabela principal
+    num_header = _determine_header(notas)
+    main_header = Paragraph("Notas", heading_style)
+    story.append(main_header)
+    story.append(Spacer(1, 6))
+    table_header = [num_header, "Chave", "Valor", "Status", "Emissão", "Autorização"]
+    table_data = [table_header]
+    for nota in notas:
+        nNF = nota.get("nNF", "N/A")
+        chave = nota.get("chNFe") or "N/A"
+        valor = locale.currency(nota.get("valor") or 0, grouping=True)
+        status = nota.get("status") or ""
+        emissao = nota.get("emitida") or ""
+        autorizacao = nota.get("autorizada") or ""
+        table_data.append([nNF, chave, valor, status, emissao, autorizacao])
+    
+    notes_table = Table(table_data, repeatRows=1, hAlign="CENTER")
+    notes_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+    ]))
+    story.append(notes_table)
+    story.append(Spacer(1, 12))
+    
+    # Produtos de cada nota
+    for nota in notas:
+        story.append(Spacer(1, 12))
+        nota_header = Paragraph(
+            f"Produtos da Nota {nota.get('nNF', 'N/A')} - Chave: {nota.get('chNFe','N/A')}",
+            styles["Heading3"]
         )
-        center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        left_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        story.append(nota_header)
+        produtos = nota.get("produtos", [])
+        if produtos:
+            prod_data = []
+            prod_header = ["Nome", "Código", "CFOP", "Qtd", "V. Unit", "V. Total"]
+            prod_data.append(prod_header)
+            for prod in produtos:
+                v_unit = locale.currency(prod.get("valor_unitario") or 0, grouping=True)
+                v_total = locale.currency(prod.get("valor_total") or 0, grouping=True)
+                prod_row = [
+                    prod.get("nome", "N/A"),
+                    prod.get("codigo", "N/A"),
+                    prod.get("cfop", "N/A"),
+                    f"{prod.get('quantidade', 0)} {prod.get('unidade', '')}",
+                    v_unit,
+                    v_total
+                ]
+                prod_data.append(prod_row)
+            prod_table = Table(prod_data, repeatRows=1, hAlign="CENTER")
+            prod_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+            ]))
+            story.append(prod_table)
+        else:
+            story.append(Paragraph("Nenhum produto registrado.", normal_style))
+    
+    doc.build(story)
 
-        # Aba de Resumo
-        ws_resumo = wb.active
-        ws_resumo.title = "Resumo"
-
-        ws_resumo['A1'] = "Total de Notas"
-        ws_resumo['B1'] = notas['resumo']['total_notas']
-        ws_resumo['A2'] = "Valor Total (R$)"
-        ws_resumo['B2'] = f"{notas['resumo']['valor_total']:.2f}"
-
-        for cell in ['A1', 'A2']:
-            ws_resumo[cell].font = header_font
-            ws_resumo[cell].fill = header_fill
-            ws_resumo[cell].border = thin_border
-            ws_resumo[cell].alignment = center_alignment
-        for cell in ['B1', 'B2']:
-            ws_resumo[cell].border = thin_border
-            ws_resumo[cell].alignment = left_alignment
-
-        # Ajustar largura das colunas na aba Resumo
-        ws_resumo.column_dimensions['A'].width = 25
-        ws_resumo.column_dimensions['B'].width = 20
-
-        # Criar uma aba para cada Nota Fiscal
-        for nota in notas['notas']:
-            nfe_number = nota.get('nNF', 'N/A')
-            # Limitar o nome da aba a 31 caracteres
-            sheet_name = f"NF {nfe_number}"[:31]
-            ws = wb.create_sheet(title=sheet_name)
-
-            row = 1
-
-            # Título da Nota Fiscal
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
-            ws.cell(row=row, column=1, value=f"Nota Fiscal - {nfe_number}")
-            ws.cell(row=row, column=1).font = Font(bold=True, size=14)
-            ws.cell(row=row, column=1).alignment = center_alignment
-            row += 2
-
-            # Detalhes da Nota Fiscal
-            details = [
-                ['Número NFC-e', nfe_number],
-                ['Nome da Nota', nota.get('nome', '')],
-                ['Valor (R$)', f"{nota.get('valor', 0):.2f}"],
-                ['Status', nota.get('status', '')],
-                ['Data de Emissão', nota.get('emitida', '')],
-                ['Data de Autorização', nota.get('autorizada', '')],
-            ]
-            for detail in details:
-                ws.cell(row=row, column=1, value=detail[0])
-                ws.cell(row=row, column=2, value=detail[1])
-                ws.cell(row=row, column=1).font = Font(bold=True)
-                ws.cell(row=row, column=1).fill = header_fill
-                ws.cell(row=row, column=1).alignment = left_alignment
-                ws.cell(row=row, column=1).border = thin_border
-                ws.cell(row=row, column=2).border = thin_border
-                ws.cell(row=row, column=2).alignment = left_alignment
-                row += 1
-
-            row += 1  # Espaço entre detalhes e produtos
-
-            # Cabeçalho da Tabela de Produtos
-            headers = ['Nome', 'Código', 'CFOP', 'Quantidade', 'Valor Unitário (R$)', 'Valor Total (R$)']
-            for col_num, header in enumerate(headers, 1):
-                cell = ws.cell(row=row, column=col_num, value=header)
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.border = thin_border
-                cell.alignment = center_alignment
-            row += 1
-
-            # Dados dos Produtos
-            for prod in nota.get('produtos', []):
-                ws.cell(row=row, column=1, value=prod.get('nome', ''))
-                ws.cell(row=row, column=2, value=prod.get('codigo', ''))
-                ws.cell(row=row, column=3, value=prod.get('cfop', ''))
-                ws.cell(row=row, column=4, value=prod.get('quantidade', ''))
-                ws.cell(row=row, column=5, value=f"{prod.get('valor_unitario', 0.0):.2f}")
-                ws.cell(row=row, column=6, value=f"{prod.get('valor_total', 0.0):.2f}")
-                # Formatar células
-                for col_num in range(1, 7):
-                    cell = ws.cell(row=row, column=col_num)
-                    cell.border = thin_border
-                    cell.alignment = left_alignment
-                row += 1
-
-            # Ajustar largura das colunas
-            for col in range(1, 7):
-                max_length = 0
-                column = get_column_letter(col)
-                for cell in ws[column]:
-                    try:
-                        if cell.value:
-                            length = len(str(cell.value))
-                            if length > max_length:
-                                max_length = length
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = adjusted_width
-
-        # Remover a planilha padrão se não for a aba Resumo
-        if 'Sheet' in wb.sheetnames:
-            std = wb['Sheet']
-            wb.remove(std)
-
-        # Salvar o arquivo Excel
-        wb.save(output_file)
-
-    except Exception as e:
-        raise RuntimeError(f"Erro ao exportar para Excel: {str(e)}")
-
-def export_to_csv(report_text, output_file):
+def export_to_txt(report: dict, output_file: str) -> None:
     """
-    Exporta o relatório como um arquivo CSV.
+    Exporta o relatório para um arquivo TXT contendo:
+      - Um resumo com Total de Notas e Notas Transmitidas (quantidade e valor);
+      - Uma tabela com os campos: Número NF-e/NFC-e, Chave, Valor, Status, Emissão, Autorização;
+      - Para cada nota, o detalhamento dos produtos.
     """
-    try:
-        notas = parse_report_text(report_text)
-        with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['Número NFC-e', 'Nome da Nota', 'Valor (R$)', 'Status',
-                          'Data de Emissão', 'Data de Autorização', 'Produtos']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for nota in notas['notas']:
-                produtos_str = "; ".join([
-                    f"{p.get('nome', '')} (Código: {p.get('codigo', '')}, CFOP: {p.get('cfop', '')}, Quantidade: {p.get('quantidade', '')}, Valor Unitário: {p.get('valor_unitario', '')}, Valor Total: {p.get('valor_total', '')})"
-                    for p in nota.get('produtos', []) if p
-                ])
-                writer.writerow({
-                    'Número NFC-e': nota.get('nNF', ''),
-                    'Nome da Nota': nota.get('nome', ''),
-                    'Valor (R$)': f"{nota.get('valor', 0):.2f}",
-                    'Status': nota.get('status', ''),
-                    'Data de Emissão': nota.get('emitida', ''),
-                    'Data de Autorização': nota.get('autorizada', ''),
-                    'Produtos': produtos_str
-                })
-    except Exception as e:
-        raise RuntimeError(f"Erro ao exportar para CSV: {str(e)}")
+    lines = []
+    lines.append("RELATÓRIO DE NFC-e")
+    lines.append("=" * 80)
+    lines.append("")
+    # Totais
+    notas = report.get("notas", [])
+    total_notas = len(notas)
+    valor_total = sum(n.get("valor", 0) for n in notas)
+    notas_transmitidas = [n for n in notas if (n.get("status") or "").lower() == "autorizada"]
+    total_transmitidas = len(notas_transmitidas)
+    valor_transmitidas = sum(n.get("valor", 0) for n in notas_transmitidas)
+    
+    lines.append("Resumo:")
+    lines.append(f"  Total de Notas: {total_notas} | Valor Total: {locale.currency(valor_total or 0, grouping=True)}")
+    lines.append(f"  Notas Transmitidas: {total_transmitidas} | Valor Transmitido: {locale.currency(valor_transmitidas or 0, grouping=True)}")
+    lines.append("")
+    
+    if notas:
+        modelo = notas[0].get("modelo", "NFC-E")
+    else:
+        modelo = "NFC-E"
+    num_header = "Número NF-e" if modelo.upper() == "NFE" else "Número NFC-e"
+    
+    header = "{:<15} {:<40} {:>12} {:<15} {:<12} {:<12}".format(
+        num_header, "Chave", "Valor", "Status", "Emissão", "Autorização"
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    
+    for nota in notas:
+        nNF = nota.get("nNF", "N/A")
+        chave = nota.get("chNFe") or "N/A"
+        try:
+            valor = locale.currency(nota.get("valor") or 0, grouping=True)
+        except Exception:
+            valor = f"R$ {(nota.get('valor') or 0):,.2f}"
+        status = nota.get("status") or ""
+        emissao = nota.get("emitida") or ""
+        autorizacao = nota.get("autorizada") or ""
+        line = "{:<15} {:<40} {:>12} {:<15} {:<12} {:<12}".format(
+            nNF, chave, valor, status, emissao, autorizacao
+        )
+        lines.append(line)
+        if nota.get("produtos"):
+            lines.append("  Produtos:")
+            prod_header = "    {:<30} {:<10} {:<8} {:<10} {:>10} {:>10}".format(
+                "Nome", "Código", "CFOP", "Qtd", "V. Unit", "V. Total"
+            )
+            lines.append(prod_header)
+            lines.append("    " + "-" * len(prod_header))
+            for prod in nota.get("produtos", []):
+                try:
+                    v_unit = locale.currency(prod.get("valor_unitario") or 0, grouping=True)
+                except Exception:
+                    v_unit = f"R$ {(prod.get('valor_unitario') or 0):,.2f}"
+                try:
+                    v_total = locale.currency(prod.get("valor_total") or 0, grouping=True)
+                except Exception:
+                    v_total = f"R$ {(prod.get('valor_total') or 0):,.2f}"
+                prod_line = "    {:<30} {:<10} {:<8} {:<10} {:>10} {:>10}".format(
+                    prod.get("nome", "N/A")[:30],
+                    prod.get("codigo", "N/A"),
+                    prod.get("cfop", "N/A"),
+                    f"{prod.get('quantidade', 0)} {prod.get('unidade', '')}",
+                    v_unit,
+                    v_total
+                )
+                lines.append(prod_line)
+    
+    text_report = "\n".join(lines)
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(text_report)
 
-def export_to_txt(report_text, output_file):
+def export_to_csv(report: dict, output_file: str) -> None:
     """
-    Exporta o relatório como um arquivo TXT.
+    Exporta o relatório para CSV utilizando pandas, com as colunas:
+      Número NF-e/NFC-e, Chave, Valor, Status, Emissão, Autorização.
     """
-    try:
-        with open(output_file, 'w', encoding='utf-8') as txtfile:
-            txtfile.write(report_text)
-    except Exception as e:
-        raise RuntimeError(f"Erro ao exportar para TXT: {str(e)}")
+    notas = report.get("notas", [])
+    if notas:
+        modelo = notas[0].get("modelo", "NFC-E")
+    else:
+        modelo = "NFC-E"
+    num_header = "Número NF-e" if modelo.upper() == "NFE" else "Número NFC-e"
+    df = pd.DataFrame(notas)
+    df = df.rename(columns={
+        "nNF": num_header,
+        "chNFe": "Chave",
+        "valor": "Valor",
+        "status": "Status",
+        "emitida": "Emissão",
+        "autorizada": "Autorização"
+    })
+    df = df[[num_header, "Chave", "Valor", "Status", "Emissão", "Autorização"]]
+    df.to_csv(output_file, sep=";", index=False, float_format="%.2f", encoding="utf-8")
+
+def export_to_excel(report: dict, output_file: str) -> None:
+    """
+    Exporta o relatório para Excel utilizando pandas, com as colunas:
+      Número NF-e/NFC-e, Chave, Valor, Status, Emissão, Autorização.
+    """
+    notas = report.get("notas", [])
+    if notas:
+        modelo = notas[0].get("modelo", "NFC-E")
+    else:
+        modelo = "NFC-E"
+    num_header = "Número NF-e" if modelo.upper() == "NFE" else "Número NFC-e"
+    df = pd.DataFrame(notas)
+    df = df.rename(columns={
+        "nNF": num_header,
+        "chNFe": "Chave",
+        "valor": "Valor",
+        "status": "Status",
+        "emitida": "Emissão",
+        "autorizada": "Autorização"
+    })
+    df = df[[num_header, "Chave", "Valor", "Status", "Emissão", "Autorização"]]
+    df.to_excel(output_file, sheet_name="Relatorio", index=False, float_format="%.2f")
